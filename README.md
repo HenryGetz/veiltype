@@ -7,7 +7,7 @@
 From git:
 
 ```bash
-cargo install --git git@github.com:HenryGetz/veiltype.git veiltype
+cargo install --git https://github.com/HenryGetz/veiltype.git veiltype
 ```
 
 Then run:
@@ -22,6 +22,18 @@ Installed command aliases:
 - `veil`
 - `veiltype`
 - `vtype`
+
+See options:
+
+```bash
+vt --help
+```
+
+Example with config:
+
+```bash
+vt --language rust --theme solarized --no-sidebar
+```
 
 ## Keybinds
 

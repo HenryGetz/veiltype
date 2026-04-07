@@ -119,6 +119,14 @@ func (s *Scheduler) Start(stop <-chan struct{}) {
     },
 ];
 
+#[derive(Debug, Clone, Copy)]
+pub enum ProfileKind {
+    Rust,
+    TypeScript,
+    Python,
+    Go,
+}
+
 #[derive(Debug, Clone)]
 pub struct FakeTyper {
     profile: LanguageProfile,
@@ -129,11 +137,21 @@ pub struct FakeTyper {
 
 impl FakeTyper {
     pub fn new() -> Self {
+        Self::with_profile(None)
+    }
+
+    pub fn with_profile(kind: Option<ProfileKind>) -> Self {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0xC0FFEE_u64);
-        let profile = PROFILES[(nanos as usize) % PROFILES.len()];
+        let profile = match kind {
+            Some(ProfileKind::Rust) => PROFILES[0],
+            Some(ProfileKind::TypeScript) => PROFILES[1],
+            Some(ProfileKind::Python) => PROFILES[2],
+            Some(ProfileKind::Go) => PROFILES[3],
+            None => PROFILES[(nanos as usize) % PROFILES.len()],
+        };
         let tape: Vec<char> = profile.decoy_code.chars().filter(|c| *c != '\r').collect();
         Self {
             profile,

@@ -2,13 +2,14 @@ use std::io::{self, Stdout};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use clap::{Parser, ValueEnum};
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use veiltype::clipboard::copy_to_clipboard;
 use veiltype::editor::{EditorAction, EditorState};
-use veiltype::fake::{FakeTyper, LanguageProfile};
+use veiltype::fake::{FakeTyper, LanguageProfile, ProfileKind};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -20,12 +21,46 @@ use syntect::highlighting::{Color as SynColor, Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
 
 fn main() -> Result<()> {
-    run()
+    run(Cli::parse())
 }
 
-fn run() -> Result<()> {
+#[derive(Debug, Parser)]
+#[command(
+    name = "veiltype",
+    about = "Hidden-input typing cloak with a believable decoy code editor UI",
+    long_about = "Capture real typing in a hidden buffer while showing a realistic decoy editor view.\n\nKeybinds:\n  Ctrl+S save/copy and exit\n  Ctrl+Q, Ctrl+Z, Esc exit without copying\n  Alt+Backspace or Ctrl+W delete previous word\n\nPaste is supported and goes into the hidden real buffer."
+)]
+struct Cli {
+    #[arg(long, value_enum, default_value_t = LanguageOpt::Random, help = "Decoy language profile")]
+    language: LanguageOpt,
+    #[arg(long, value_enum, default_value_t = ThemeOpt::Ocean, help = "Editor color theme")]
+    theme: ThemeOpt,
+    #[arg(long, help = "Hide the fake file sidebar")]
+    no_sidebar: bool,
+    #[arg(long, help = "Print clipboard backend used after Ctrl+S")]
+    copy_report: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum LanguageOpt {
+    Random,
+    Rust,
+    Typescript,
+    Python,
+    Go,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ThemeOpt {
+    Ocean,
+    Eighties,
+    Solarized,
+    Github,
+}
+
+fn run(cli: Cli) -> Result<()> {
     let mut terminal = setup_terminal()?;
-    let mut app = App::new();
+    let mut app = App::new(cli.language, cli.theme, !cli.no_sidebar);
 
     let mut final_text = None;
     let mut cancelled = false;
@@ -75,7 +110,10 @@ fn run() -> Result<()> {
     }
 
     let typed = final_text.unwrap_or_default();
-    let _ = copy_to_clipboard(&typed).context("copy failed")?;
+    let outcome = copy_to_clipboard(&typed).context("copy failed")?;
+    if cli.copy_report {
+        println!("copied via {}", outcome.provider);
+    }
 
     Ok(())
 }
@@ -88,20 +126,29 @@ struct App {
     syn: SyntaxHighlighter,
     scroll_line: usize,
     started_at: Instant,
+    show_sidebar: bool,
 }
 
 impl App {
-    fn new() -> Self {
-        let fake_typer = FakeTyper::new();
+    fn new(language: LanguageOpt, theme: ThemeOpt, show_sidebar: bool) -> Self {
+        let profile_kind = match language {
+            LanguageOpt::Random => None,
+            LanguageOpt::Rust => Some(ProfileKind::Rust),
+            LanguageOpt::Typescript => Some(ProfileKind::TypeScript),
+            LanguageOpt::Python => Some(ProfileKind::Python),
+            LanguageOpt::Go => Some(ProfileKind::Go),
+        };
+        let fake_typer = FakeTyper::with_profile(profile_kind);
         let profile = fake_typer.profile();
         Self {
             real: EditorState::new(),
             fake: EditorState::new(),
             fake_typer,
             profile,
-            syn: SyntaxHighlighter::new(),
+            syn: SyntaxHighlighter::new(theme),
             scroll_line: 0,
             started_at: Instant::now(),
+            show_sidebar,
         }
     }
 
@@ -154,44 +201,49 @@ impl App {
         frame.render_widget(title, chunks[1]);
 
         let editor_area = chunks[2];
-        let split = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(24), Constraint::Min(20)])
-            .split(editor_area);
+        let editor_pane = if self.show_sidebar {
+            let split = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(24), Constraint::Min(20)])
+                .split(editor_area);
 
-        let sidebar = split[0];
-        let sidebar_lines = vec![
-            Line::from(Span::styled(
-                "goatfood-tui",
-                Style::default().fg(Color::Rgb(172, 188, 214)),
-            )),
-            Line::from("  src"),
-            Line::from("    core"),
-            Line::from(Span::styled(
-                format!("    > {}", self.profile.file_name),
-                Style::default()
-                    .fg(Color::Rgb(220, 234, 255))
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from("  tests"),
-            Line::from("  scripts"),
-            Line::from(""),
-            Line::from(Span::styled(
-                "OUTLINE",
-                Style::default().fg(Color::Rgb(130, 145, 170)),
-            )),
-            Line::from("  - bootstrap"),
-            Line::from("  - hydrate"),
-            Line::from("  - flush"),
-        ];
-        let sidebar_widget = Paragraph::new(sidebar_lines)
-            .block(Block::default().title(" files ").borders(Borders::ALL))
-            .style(Style::default().fg(Color::Rgb(158, 172, 196)));
-        frame.render_widget(sidebar_widget, sidebar);
+            let sidebar = split[0];
+            let sidebar_lines = vec![
+                Line::from(Span::styled(
+                    "goatfood-tui",
+                    Style::default().fg(Color::Rgb(172, 188, 214)),
+                )),
+                Line::from("  src"),
+                Line::from("    core"),
+                Line::from(Span::styled(
+                    format!("    > {}", self.profile.file_name),
+                    Style::default()
+                        .fg(Color::Rgb(220, 234, 255))
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from("  tests"),
+                Line::from("  scripts"),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "OUTLINE",
+                    Style::default().fg(Color::Rgb(130, 145, 170)),
+                )),
+                Line::from("  - bootstrap"),
+                Line::from("  - hydrate"),
+                Line::from("  - flush"),
+            ];
+            let sidebar_widget = Paragraph::new(sidebar_lines)
+                .block(Block::default().title(" files ").borders(Borders::ALL))
+                .style(Style::default().fg(Color::Rgb(158, 172, 196)));
+            frame.render_widget(sidebar_widget, sidebar);
+            split[1]
+        } else {
+            editor_area
+        };
 
         let block = Block::default().title(" editor ").borders(Borders::ALL);
-        let inner = block.inner(split[1]);
-        frame.render_widget(block, split[1]);
+        let inner = block.inner(editor_pane);
+        frame.render_widget(block, editor_pane);
 
         let visible_lines = inner.height.max(1) as usize;
         let (cursor_line, cursor_col) = self.fake.line_col();
@@ -285,13 +337,20 @@ struct SyntaxHighlighter {
 }
 
 impl SyntaxHighlighter {
-    fn new() -> Self {
+    fn new(theme: ThemeOpt) -> Self {
         let ps = SyntaxSet::load_defaults_newlines();
         let ts = ThemeSet::load_defaults();
+        let theme_name = match theme {
+            ThemeOpt::Ocean => "base16-ocean.dark",
+            ThemeOpt::Eighties => "base16-eighties.dark",
+            ThemeOpt::Solarized => "Solarized (dark)",
+            ThemeOpt::Github => "InspiredGitHub",
+        };
         let theme = ts
             .themes
-            .get("base16-ocean.dark")
+            .get(theme_name)
             .cloned()
+            .or_else(|| ts.themes.get("base16-ocean.dark").cloned())
             .unwrap_or_default();
         Self { ps, theme }
     }
