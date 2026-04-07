@@ -1,0 +1,31 @@
+[package]
+name = "veiltype"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+arboard = "3.6"
+base64 = "0.22"
+crossterm = "0.29"
+ratatui = "0.29"
+syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+clipboard-win = "5.4"
+
+[[bin]]
+name = "vt"
+path = "src/main.rs"
+
+[[bin]]
+name = "veil"
+path = "src/main.rs"
+
+[[bin]]
+name = "veiltype"
+path = "src/main.rs"
+
+[[bin]]
+name = "vtype"
+path = "src/main.rs"
